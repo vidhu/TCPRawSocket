@@ -1,3 +1,4 @@
+import atexit
 import socket
 import struct
 import sys
@@ -33,13 +34,28 @@ def rcvSetup():
         print tcppkt.DATA
         #print raw_data
 
-
+s = None
+open = False
 def main():
     ipLayer = IPLayer()
     s = TCPSocket(ipLayer)
     s.connect('192.168.0.21', 8080)
+    open = True
     s.send("GET / HTTP/1.1\nHost: 192.168.0.21:8080\nConnection: keep-alive\nAccept: text/html\n\n")
-    s.close()
 
+    data = s.recv(1)
+    while('\r\n\r\n' not in data):
+        data += s.recv(1)
+    print data
+
+    if(open):
+        s.close()
+
+
+def exit_handler():
+    if (open):
+        s.close()
+
+atexit.register(exit_handler)
 main()
 #sendSetup()

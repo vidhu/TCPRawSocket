@@ -10,6 +10,9 @@ class TCPSocket:
     NextSEQNum = 0
     NextACKNum = 0
 
+    SendData = ""
+    RecvData = ""
+
     def __init__(self, iplayer):
         self._iplayer = iplayer
 
@@ -21,14 +24,16 @@ class TCPSocket:
 
 
         #Collect Data Here
-        data = ""
-        while("Hello" not in data):
-            pkt = self.recv()
-            data += pkt.DATA
+        while("Hello" not in self.RecvData):
+            pkt = self._recv()
+            self.RecvData += pkt.DATA
+            #print pkt
 
 
-        print data
-
+    def recv(self, length):
+        returnData = self.RecvData[:length]
+        self.RecvData = self.RecvData[length:]
+        return returnData
 
     def _send(self, pkt):
         pkt.SEQ = self.NextSEQNum
@@ -51,7 +56,7 @@ class TCPSocket:
         ack.fACK = 1
         self._send(ack)
 
-    def recv(self):
+    def _recv(self):
         while True:
             ippkt = self._iplayer.recv()
             tcppkt = TCPPacket()
@@ -85,7 +90,7 @@ class TCPSocket:
 
         #Wait for SYN-ACK
         while(True):
-            tcppkt = self.recv()
+            tcppkt = self._recv()
             if(tcppkt.fSYN == 1 and tcppkt.fACK == 1):
                 break
 
@@ -108,11 +113,9 @@ class TCPSocket:
 
         # Wait for FIN ACK
         while (True):
-            tcppkt = self.recv()
+            tcppkt = self._recv()
             if(tcppkt.fFIN == 1):
                 break
-
-
 
     def makeTCPPacket(self):
         pkt = TCPPacket()
