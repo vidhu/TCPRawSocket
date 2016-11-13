@@ -1,9 +1,15 @@
-import socket
+import sys
+import time
+import thread
+import threading
 from IPLayer import IPLayer
 from TCPPacket import TCPPacket
 
 class TCPSocket:
+    _localport = 1235
     _iplayer = None
+    _socketOpen = False
+    closeInitiated = False
     IP = None   # IP to connect to
     Port = None # Port to connect to
 
@@ -13,22 +19,23 @@ class TCPSocket:
     SendData = ""
     RecvData = ""
 
+    SendPkts = []
+    RecvPkts = []
+
     def __init__(self, iplayer):
         self._iplayer = iplayer
 
+        recv_thread = threading.Thread(target=self._recvthread)
+        recv_thread.daemon = False
+        recv_thread.start()
+
+        send_thread = threading.Thread(target=self._sendthread)
+        send_thread.daemon = False
+        send_thread.start()
+
+
     def send(self, data):
-        pkt = self.makeTCPPacket()
-        pkt.fACK = 1
-        pkt.DATA = data
-        self._send(pkt)
-
-
-        #Collect Data Here
-        while("Hello" not in self.RecvData):
-            pkt = self._recv()
-            self.RecvData += pkt.DATA
-            #print pkt
-
+        self.SendData += data
 
     def recv(self, length):
         returnData = self.RecvData[:length]
@@ -56,24 +63,64 @@ class TCPSocket:
         ack.fACK = 1
         self._send(ack)
 
-    def _recv(self):
+    def _sendthread(self):
+        mss = 256
+
+        while(True):
+            if(len(self.SendData) > 0):
+                pkt = self.makeTCPPacket()
+                pkt.fACK = 1
+                pkt.DATA = self.SendData[:mss]
+
+                self.SendData = self.SendData[mss:]
+
+                self._send(pkt)
+
+    def _recvthread(self):
         while True:
+            #Get TCP Packet
             ippkt = self._iplayer.recv()
             tcppkt = TCPPacket()
             tcppkt.fromData(ippkt.Data)
 
-            if(tcppkt.DST == 1234):
-                if(len(tcppkt.DATA) == 0):
-                    self.NextACKNum = tcppkt.SEQ + 1
-                else:
-                    self.NextACKNum = tcppkt.SEQ + len(tcppkt.DATA)
+            if(tcppkt.DST == self._localport):
+                #print tcppkt
+                #if packet SEQ is not expected? (out of order) skip it
+                #ignore syn flagged packetrs since its the fist packet
+                #so there is no way of knowing the expected seq number
+                if(tcppkt.fSYN == 0 and tcppkt.SEQ != (self.NextACKNum)):
+                    print "out of order packet"
+                    print "SEQ: {}\tEXP: {}".format(tcppkt.SEQ, self.NextACKNum)
+                    print "Acking: {}".format(self.NextACKNum)
+                    #Ack last packet
+                    self._sendAck()
+                    continue
+
+
 
                 # Don't ACK the ACK packets received. ACK all others
-                if(not(tcppkt.fACK == 1 and len(tcppkt.DATA) == 0 and tcppkt.fFIN != 0)):
-                    self._sendAck()
+                if(not(tcppkt.fACK == 1 and len(tcppkt.DATA) == 0 and tcppkt.fFIN == 0 and tcppkt.fSYN != 1)):
+                    if (len(tcppkt.DATA) == 0):
+                        self.NextACKNum = tcppkt.SEQ + 1
+                    else:
+                        self.NextACKNum = tcppkt.SEQ + len(tcppkt.DATA)
 
-                #print tcppkt
-                return tcppkt
+                    self._sendAck()
+                    self.RecvData += tcppkt.DATA
+                    #sys.stdout.write(tcppkt.DATA)
+
+                #Close connection if FIN packet is received
+                if(tcppkt.fFIN == 1):
+                    if((not self.closeInitiated)):
+                        self.close()
+
+                #If RST PKT, close
+                if(tcppkt.fRST == 1):
+                    print "Received RST flagged packet"
+                    self._socketOpen = False
+                    return
+
+                self.RecvPkts.append(tcppkt)
 
     def connect(self, ip, port):
         self.IP = ip
@@ -88,13 +135,21 @@ class TCPSocket:
         syn.fSYN = 1
         self._send(syn)
 
+
         #Wait for SYN-ACK
         while(True):
-            tcppkt = self._recv()
-            if(tcppkt.fSYN == 1 and tcppkt.fACK == 1):
-                break
+            #If a packet exists in the buffer
+            if(len(self.RecvPkts) > 0):
+                #Remove the packet
+                tcppkt = self.RecvPkts[0]
+                self.RecvPkts = self.RecvPkts[1:]
+                #And check if its a SYN-ACK
+                if(tcppkt.fSYN == 1 and tcppkt.fACK == 1):
+                    #Break if it is
+                    break
 
-
+        time.sleep(1)
+        self._socketOpen = True
 
         print "================================="
         print "Connected!!"
@@ -104,6 +159,10 @@ class TCPSocket:
         print "================================="
         print "Closing Connection"
         print "================================="
+        if (not self._socketOpen):
+            return
+
+        self.closeInitiated = True
 
         #Send Fin ACK
         fin = self.makeTCPPacket()
@@ -113,13 +172,20 @@ class TCPSocket:
 
         # Wait for FIN ACK
         while (True):
-            tcppkt = self._recv()
-            if(tcppkt.fFIN == 1):
-                break
+            # If a packet exists in the buffer
+            if (len(self.RecvPkts) > 0):
+                # Remove the packet
+                tcppkt = self.RecvPkts[0]
+                self.RecvPkts = self.RecvPkts[1:]
+                # And check if its a FIN-ACK
+                if(tcppkt.fFIN == 1):
+                    break
+
+        self._socketOpen = False
 
     def makeTCPPacket(self):
         pkt = TCPPacket()
         pkt.setIP(IPLayer.get_ip_address(), self.IP)
-        pkt.SRC = 1234
+        pkt.SRC = self._localport
         pkt.DST = self.Port
         return pkt
