@@ -6,7 +6,7 @@ from IPLayer import IPLayer
 from TCPPacket import TCPPacket
 
 class TCPSocket:
-    _localport = 1235
+    _localport = 1238
     _iplayer = None
     _socketOpen = False
     closeInitiated = False
