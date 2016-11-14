@@ -6,9 +6,10 @@ from IPLayer import IPLayer
 from TCPPacket import TCPPacket
 
 class TCPSocket:
-    _localport = 1238
+    _localport = 1235
     _iplayer = None
     _socketOpen = False
+    _cwnd = 1
     closeInitiated = False
     IP = None   # IP to connect to
     Port = None # Port to connect to
@@ -19,18 +20,20 @@ class TCPSocket:
     SendData = ""
     RecvData = ""
 
-    SendPkts = []
+    UnAckedPkts = []
     RecvPkts = []
+
+    LargestAck = 0
 
     def __init__(self, iplayer):
         self._iplayer = iplayer
 
         recv_thread = threading.Thread(target=self._recvthread)
-        recv_thread.daemon = False
+        recv_thread.daemon = True
         recv_thread.start()
 
         send_thread = threading.Thread(target=self._sendthread)
-        send_thread.daemon = False
+        send_thread.daemon = True
         send_thread.start()
 
 
@@ -67,7 +70,27 @@ class TCPSocket:
         mss = 256
 
         while(True):
-            if(len(self.SendData) > 0):
+            if(len(self.UnAckedPkts) > 0):
+                curtime = time.time()
+                earliestTime, earliestPkt = self.UnAckedPkts[0]
+                if(curtime - earliestTime > 60):
+                    #Timeout occured here
+
+                    #reset cwnd
+                    self._cwnd = 1
+
+                    #remove the timesout packet so it can be resent
+                    self.UnAckedPkts = self.UnAckedPkts[1:]
+
+                    #retransmit packet
+                    self._iplayer.send(self.IP, earliestPkt.toHexString())
+
+                    # add (timestamp, pkt) to unacked packet list
+                    self.UnAckedPkts.append((time.time(), pkt))
+                continue
+
+            #Send Packet if Data exist
+            if(len(self.SendData) > 0 and len(self.UnAckedPkts) < self._cwnd):
                 pkt = self.makeTCPPacket()
                 pkt.fACK = 1
                 pkt.DATA = self.SendData[:mss]
@@ -75,6 +98,14 @@ class TCPSocket:
                 self.SendData = self.SendData[mss:]
 
                 self._send(pkt)
+
+                #add (timestamp, pkt) to unacked packet list
+                self.UnAckedPkts.append((time.time(), pkt))
+
+
+
+
+
 
     def _recvthread(self):
         while True:
@@ -108,6 +139,11 @@ class TCPSocket:
                     self._sendAck()
                     self.RecvData += tcppkt.DATA
                     #sys.stdout.write(tcppkt.DATA)
+
+                #When you receive an ACK
+                if(tcppkt.fACK == 1):
+                    self.LargestAck = tcppkt.ACK
+                    self._cwnd += 1
 
                 #Close connection if FIN packet is received
                 if(tcppkt.fFIN == 1):
