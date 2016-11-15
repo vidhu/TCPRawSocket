@@ -4,7 +4,7 @@ import socket
 from urlparse import urlparse
 from IPLayer import IPLayer
 from TCPSocket import TCPSocket
-
+from TCPPacket import TCPPacket
 
 s = None
 def main():
@@ -17,8 +17,11 @@ def main():
     path = url[2]
     ip = getIpAddress(host)
 
-    if(path[-1] == '/'):
-        path += "index.html"
+    if(len(path) > 0):
+        if(path[-1] == '/'):
+            path += "index.html"
+    else:
+        path = "/index.html"
 
     #Set File name
     filename = path.split('/')[-1]

@@ -1,12 +1,12 @@
 import sys
 import time
-import thread
+import socket
 import threading
 from IPLayer import IPLayer
 from TCPPacket import TCPPacket
 
 class TCPSocket:
-    _localport = 1235
+    _localport = 1236
     _iplayer = None
     _socketOpen = False
     _cwnd = 1
@@ -104,25 +104,23 @@ class TCPSocket:
 
 
 
-
-
-
     def _recvthread(self):
         while True:
             #Get TCP Packet
             ippkt = self._iplayer.recv()
             tcppkt = TCPPacket()
             tcppkt.fromData(ippkt.Data)
+            tcppkt._srcip = socket.inet_ntoa(ippkt.SRC)
+            tcppkt._dstip = socket.inet_ntoa(ippkt.Dest)
 
             if(tcppkt.DST == self._localport):
-                #print tcppkt
                 #if packet SEQ is not expected? (out of order) skip it
                 #ignore syn flagged packetrs since its the fist packet
                 #so there is no way of knowing the expected seq number
                 if(tcppkt.fSYN == 0 and tcppkt.SEQ != (self.NextACKNum)):
-                    print "out of order packet"
-                    print "SEQ: {}\tEXP: {}".format(tcppkt.SEQ, self.NextACKNum)
-                    print "Acking: {}".format(self.NextACKNum)
+                    #print "out of order packet"
+                    #print "SEQ: {}\tEXP: {}".format(tcppkt.SEQ, self.NextACKNum)
+                    #print "Acking: {}".format(self.NextACKNum)
                     #Ack last packet
                     self._sendAck()
                     continue
@@ -143,7 +141,8 @@ class TCPSocket:
                 #When you receive an ACK
                 if(tcppkt.fACK == 1):
                     self.LargestAck = tcppkt.ACK
-                    self._cwnd += 1
+                    if(self._cwnd < 1000):
+                        self._cwnd += 1
 
                 #Close connection if FIN packet is received
                 if(tcppkt.fFIN == 1):
@@ -152,7 +151,7 @@ class TCPSocket:
 
                 #If RST PKT, close
                 if(tcppkt.fRST == 1):
-                    print "Received RST flagged packet"
+                    #print "Received RST flagged packet"
                     self._socketOpen = False
                     return
 
@@ -162,9 +161,9 @@ class TCPSocket:
         self.IP = ip
         self.Port = port
 
-        print "================================="
-        print "Opening Connection"
-        print "================================="
+        #print "================================="
+        #print "Opening Connection"
+        #print "================================="
 
         #Send SYN
         syn = self.makeTCPPacket()
@@ -187,14 +186,14 @@ class TCPSocket:
         time.sleep(1)
         self._socketOpen = True
 
-        print "================================="
-        print "Connected!!"
-        print "================================="
+        #print "================================="
+        #print "Connected!!"
+        #print "================================="
 
     def close(self):
-        print "================================="
-        print "Closing Connection"
-        print "================================="
+        #print "================================="
+        #print "Closing Connection"
+        #print "================================="
         if (not self._socketOpen):
             return
 
@@ -225,3 +224,4 @@ class TCPSocket:
         pkt.SRC = self._localport
         pkt.DST = self.Port
         return pkt
+

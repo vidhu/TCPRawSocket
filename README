@@ -1,0 +1,160 @@
+This program can be states using the command line params:
+./rawhttpget [URL]
+
+This program is split into 2 parts:
+ - IPStack (IPLayer.py, IPPacket.py)
+ - TCPStack (TCPSocker.py, TCPPacker.py)
+
+Synopsis:
+When given a URL via command line parameter, the program received the remote
+IP address and constructs an HTTP Get request based on the URL given. Once
+this is done the program initiates the IPLayer and then a TCP Socket which
+then connects to the IP address on port 80. Once connected, it send the server
+the HTTP GET request which was previously created and then loops in a while loop
+untill the connection is terminated by the server. Once the connection is terminated
+by the server, the data received by the TCP Socket is written to disk.
+
+
+=====================================================================================
+IPStack (IPPacket.py and IPLayer.py):
+=====================================================================================
+In the IP Stack, an IPLayer object is created. When created, it's constructor creates
+two raw sockets. One socket for receiving data and the other for sending data.
+Once the IPLayer has been initiated, data can be sent using the 'IPlayer.send()'
+method and data can be received using the 'IPLayer.recv()' method.
+
+When data is given the the 'IPLayer.send()' method, the function constructs an
+IPPacket and fills the data section with the given data and the appropriate fields in
+the header is set. This packet is then converted into binary data and sent through
+the raw socket. The Packet checksum is automatically calculated and set via the raw
+socket
+
+When data is received, the data is converted into a IPPacket with the appropriate
+header fields set. This IPPacket is the returned to the function that called the
+`IPLayer.recv()` functions
+
+
+=====================================================================================
+TCPStack (TCPPacket.py and TCPSocket.py):
+=====================================================================================
+
+TCPPacket:
+A TCPPacket can be initialised by creating a new TCPPacket() object. Once a packet has
+been created, data can be added to it to be included in the packet's payload. Once
+this packet is ready to added into an IP Packet, the TCPPacket.toHexString() function
+can be called to get the binary representation of this TCP packet. When this function
+is called, several things happen.
+
+    1. The Packet header is constructe in binary form
+    2. The Packets Pseuo-Header is also constructed
+    3. The Check Sum of this Packet is calculate using the Pseudo-Header and the main
+       header
+    4. Once the checksum is calculated the whole packet is recreated in binary form
+       with the checksum included
+
+Once the obove process is completed, the binary representation of the TCP Packet is
+returned to the calling functions
+
+
+TCPSocket:
+A TCPSocket can be created by creating a new TCPSocket() object. The constructor takes
+an IPLayer as an argument. This is so that the TCP socket can communicated to the
+IPLayer. In otherwords, the IPLayer is injected as a dependancy in the IPSocket object
+Once the TCPSocket has been initiated, two threads are created in the constructor. One
+thread is used for receiving data and the other for sending data.
+
+The send thread looks for data to send in the send buffer which is TCPSocket.SendData
+The receive thread runs an infinite loop polling for new data from the IPLayer. When
+the receive thread reseives any packets, it appends it to a list of received packets:
+TCPSocket.RecvPkts
+
+Connecting
+    Once a TCPSocket has been initiated, a connection can be initialized using the
+    'TCPSocket.connect(ip, port)' method. This method create a SYN packet and send it to
+    the IPLayer for it to be sent over the network. Once sent, the receive thread receives
+    a SYN-ACk packet and sends an ACK packet in response. The connection functions checks
+    the TCPSocket.RecvPkts list to see if there it received a SYNACK packet. If it find one,
+    it sets the TCP state to connected.
+
+Sending Data:
+    Once a TCPSocket has been connected, the upper layers can send it data using the
+    TCPSocket.send(data) functions. When data is sent using this function, the function simple
+    append this data to the send queue TCPSocket.SendData. When this is done the send thead
+    picks out this piece of data and constructs the a TCPPacket which is then sent to the
+    IPLayer to be sent over the network. Again, the send thread constantly pols the SendData
+    list for new data to be sent.
+
+    A simple congesstion window is implemented in this TCPSocket implementations.
+    Whenever a packet times out, the congestion window is set to one and everytime a packet
+    is acked by the receive thread, the congestion window is incremented by one. The send
+    function maintains a list of send buy unacked packets along with their UNIX timestamps.
+    Every iteration where the send function pols for new data to be sent, it also checks
+    for any timeouts of 60s in the list of send but unacked packets. If a packet is found to
+    be timed out, it is resent and removed from this list and the cwnd is set  back to 1.
+
+    The congestion window's capacity can be determined by the size of the unacked packet list.
+    If the windows capacity is 100% i.e the amount of unacked packets == cwnd, then the send
+    thread doesn't send any more data untill the unacked packet list reduces.
+
+Receiving data:
+    In the receive thread, the thread is in an infinite loop, poling for data from the IPLayer.
+    Whenever, the thread receives an ACK packet, it removed the packet that has been acked from
+    the unacked packet list to make room for more packets to be sent.
+
+    Whenever, it receives any packets, the packet's check sum is verified by recreating the
+    TCP packet and asserting the received checksum against the recalculated checksum.
+
+    Whenever a packet with data is received, a TCP packet object is recreated using the
+    TCPPacket.fromData(bin) function. Form this recreated packet, the data is extracted and
+    appended to the RecvData buffer.
+
+    Whenever an out-fo-order packet is received which can be detected by last ACK number sent
+    by the client, the client simply ignores it and reacks the last successfully received
+    packet. This way the congestion control on the server doesn't start thus throughput is
+    maintained and the server can retransmit the out of order packet correctly.
+
+Closing connection:
+    The TCPSocket's connection can be closed by 3 ways. First it can receive a RST packet in
+    which case the the socket abandons the connection and no further data is received or sent
+
+    The second way is when the TCPSocket sends a FIN packet. To do this the TCPSocket.close()
+    function is called. This function sends a FIN packet to the server. it then waits in a
+    loop for a FIN&ACK packet. When this packet is received, the send thread acks this packet
+    and the Socket connection's state is set to closed.
+
+    The third way is if the server sends a FIN packet in which case the Recieve send an ACK
+    packet and calls the close() method which in turn then sends a FIN packet and wait for
+    an ACK packet from the server. Once this is done, the connection state is set to closed
+
+
+=================================================================================================
+Testing:
+=================================================================================================
+Multiple tests were done. The first test was done by using wireshark to ensure that connections
+were being established correctly. This means checking that the 3 way handshake occured. Then
+closing the connection was tested. The code was checked to see if the connection closed properly
+when is received a RST flaged packet, when a FIN flaged packet was recevied and when a FIN flaged
+packet was sent.
+
+Then the procedure of sending data was tested. The test involved checking to see if packets were
+being sent with the  correct sequence number and Acknowledgments were being sent for the correct
+packet SEQ number. Then the congestion window was tested to ensure that no more than cwnd packets
+were being sent and when a packet timedout, the cwnd windows was reset to 1.
+
+The second set of test that was performed was stress testing. This was done by downloading 3 files
+of 2MB, 10MB and 50MB. Once the files were downloaded, a MD5 checksum was generated on each of the
+files and compared with a MD5 checksum of the original file. Once it matched, the stress test
+successded.
+
+
+=================================================================================================
+Challenges:
+=================================================================================================
+Dealing with out of order packets proved to be challending. Initially we decided to ignore these
+packets and let the server retransmit. But later during our stress test, we found that by ignoring
+these out of order packets, the server's TCP went into congestion control mode thus causing
+throughput to be severely limited.
+
+Another challenge we faced was calculating checksums of TCP packets. We researched the TCP's RFC
+protocol specification and refered and adapted code to our use case.
+

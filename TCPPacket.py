@@ -24,6 +24,7 @@ class TCPPacket:
     WND = socket.htons(5840)
     CHK = 0
     URG = 0
+    OPT = ''
     DATA = ""
 
     def __int__(self):
@@ -78,7 +79,7 @@ class TCPPacket:
     def checkSum(self, data):
         s = 0
 
-        # loop taking 2 characters at a time
+        # sum of 1 complements. Add byte after byte
         for i in range(0, len(data), 2):
             if(i == len(data)-1):
                 w = ord(data[i]) + (0x00 << 8)
@@ -89,10 +90,41 @@ class TCPPacket:
         s = (s >> 16) + (s & 0xffff)
         s = s + (s >> 16)
 
-        # complement and mask to 4 byte short
+        # get first 4 least significant bytes
         s = ~s & 0xffff
 
         return s
+
+    def validChecksum(self):
+        #Construct TCP Header
+        tcp_flags = self.fFIN + (self.fSYN << 1) + (self.fRST << 2) + (self.fPSH << 3) + (self.fACK << 4) + (
+        self.fURG << 5)
+        header = pack('!HHLLBBHHH',
+                      self.SRC,
+                      self.DST,
+                      self.SEQ,
+                      self.ACK,
+                      (self.LEN << 4) + 0,
+                      tcp_flags,
+                      self.WND,
+                      0,
+                      self.URG)
+        header += self.OPT
+
+        # Calculate Data length
+        data_len = 0
+        if (self.DATA != None):
+            data_len = len(self.DATA)
+
+        # Create Pseudo TCP Packet
+        psh = pack('!4s4sBBH',
+                   socket.inet_aton(self._srcip),
+                   socket.inet_aton(self._dstip), 0, socket.IPPROTO_TCP, (len(header)) + data_len)
+        psh = psh + header + (self.DATA if self.DATA != None else "")
+
+        checksum = self.checkSum(psh)
+
+        return pack('<H', checksum) == pack('>H', self.CHK)
 
     def fromData(self, data):
         src, dst, seq, ack, hlen, flags, wnd, chksum, urg = unpack("!HHLLBBHHH", data[:20])
@@ -104,6 +136,7 @@ class TCPPacket:
         self.WND = wnd
         self.CHK = chksum
         self.URG = urg
+        self.OPT = data[20:hlen >> 2]
 
         (self.fURG, self.fACK, self.fPSH, self.fRST, self.fSYN, self.fFIN) = TCPPacket.getFlagsFromByte(flags)
 
